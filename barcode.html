@@ -31,9 +31,8 @@
             border-radius: 8px;
             overflow: hidden;
             margin-bottom: 15px;
-            border: none !important; /* 移除預設的邊框 */
+            border: none !important;
         }
-        /* 修正 html5-qrcode 內部按鈕樣式使其更美觀 */
         #reader button {
             background-color: #007aff;
             color: white;
@@ -105,7 +104,7 @@
     <div id="reader"></div>
     
     <div class="input-group">
-        <input type="text" id="manualInput" placeholder="手動輸入號碼 / 條碼" autocomplete="off" inputmode="text">
+        <input type="text" id="manualInput" placeholder="手動輸入號碼 / 條碼" autocomplete="off">
         <button class="btn-primary" onclick="addManualData()">加入</button>
     </div>
 
@@ -130,10 +129,8 @@
 </div>
 
 <script>
-    // 初始化本地儲存，確保 refresh 唔會洗機
     let collectedData = JSON.parse(localStorage.getItem('scanned_data')) || [];
 
-    // 更新介面 UI
     function updateUI() {
         localStorage.setItem('scanned_data', JSON.stringify(collectedData));
         document.getElementById('count').innerText = collectedData.length;
@@ -145,27 +142,92 @@
             return;
         }
 
-        // 倒序顯示：最新加入嘅排最前
         [...collectedData].reverse().forEach(item => {
             const row = `<tr><td>${item.time}</td><td>${item.value}</td></tr>`;
             tbody.innerHTML += row;
         });
     }
 
-    // 新增一條紀錄
     function addRecord(value) {
         if (!value.trim()) return;
         
         const now = new Date();
-        const timeStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+        const timeStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}::${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
         
         collectedData.push({ time: timeStr, value: value.trim() });
         updateUI();
         
-        // 成功加入時手機震動提示（iOS Safari 需用戶曾與頁面互動才生效）
         if (navigator.vibrate) navigator.vibrate(100);
     }
 
-    // 按鍵盤「加入」按鈕
     function addManualData() {
-        const input = document.getElementById('
+        const input = document.getElementById('manualInput');
+        addRecord(input.value);
+        input.value = '';
+        input.focus();
+    }
+
+    document.getElementById('manualInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            addManualData();
+        }
+    });
+
+    function clearData() {
+        if (confirm('確定要永久刪除所有已記錄的數據嗎？')) {
+            collectedData = [];
+            updateUI();
+        }
+    }
+
+    function exportToCSV() {
+        if (collectedData.length === 0) {
+            alert('沒有數據可以匯出！');
+            return;
+        }
+        
+        let csvContent = "\uFEFF"; 
+        csvContent += "時間,條碼數值\n";
+        
+        collectedData.forEach(item => {
+            const safeValue = `"${item.value.replace(/"/g, '""')}"`;
+            csvContent += `${item.time},${safeValue}\n`;
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `barcode_export_${Date.now()}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    function onScanSuccess(decodedText, decodedResult) {
+        if (window.lastScan && Date.now() - window.lastScan < 1500) return;
+        window.lastScan = Date.now();
+        addRecord(decodedText);
+    }
+
+    // --- 關鍵修正：啟動條碼掃描器 ---
+    const html5QrcodeScanner = new Html5QrcodeScanner(
+        "reader", 
+        { 
+            fps: 15,
+            // 修正為 iOS 支援的固定寬高 Object，不再使用 Function，避免崩潰
+            qrbox: { width: 300, height: 120 }, 
+            rememberLastUsedCamera: true,
+            // 強制設定鏡頭調用參數，防止在 iOS Firefox/Safari 上選擇了錯誤的鏡頭
+            videoConstraints: {
+                facingMode: "environment"
+            }
+        }
+    );
+    html5QrcodeScanner.render(onScanSuccess);
+
+    updateUI();
+</script>
+
+</body>
+</html>
