@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Barcode & 手動輸入收集器 v0.12</title>
+    <title>Barcode & 手動輸入收集器 v0.13</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
         body {
@@ -27,7 +27,6 @@
             color: #1d1d1f;
         }
         
-        /* 鏡頭外殼容器 */
         .scanner-wrapper {
             position: relative;
             width: 100%;
@@ -48,7 +47,6 @@
             object-fit: cover !important;
         }
 
-        /* 自定義 CSS 掃描線/框 */
         .scan-laser {
             position: absolute;
             top: 50%;
@@ -109,6 +107,7 @@
         .btn-success { background-color: #34c759; color: white; width: 100%; margin-top: 10px; }
         .btn-danger { background-color: #ff3b30; color: white; }
         .btn-warn { background-color: #ff9500; color: white; width: 100%; margin-top: 10px; }
+        .btn-camera { background-color: #5856d6; color: white; width: 100%; margin-top: 10px; }
         
         .list-container {
             margin-top: 20px;
@@ -137,13 +136,14 @@
             font-size: 12px;
             text-align: center;
             margin-top: 5px;
+            min-height: 16px;
         }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>條碼掃描 & 數據收集 v0.12</h2>
+    <h2>條碼掃描 & 數據收集 v0.13</h2>
     
     <div class="scanner-wrapper">
         <div id="reader"></div>
@@ -153,6 +153,7 @@
     <div id="errorLog" class="error-message"></div>
     
     <button class="btn-warn" id="testAudioBtn" onclick="testAudio()">🔊 點擊此處激活/測試「嗶」聲</button>
+    <button class="btn-camera" onclick="restartCamera()">📷 重新啟動相機</button>
     <div style="margin-bottom: 15px;"></div>
 
     <div class="input-group">
@@ -173,8 +174,7 @@
                         <th style="width: 55%;">條碼數值</th>
                     </tr>
                 </thead>
-                <tbody id="dataTableBody">
-                    </tbody>
+                <tbody id="dataTableBody"></tbody>
             </table>
         </div>
     </div>
@@ -184,35 +184,36 @@
     let collectedData = JSON.parse(localStorage.getItem('scanned_data')) || [];
     let audioCtx = null;
     let html5QrCode = null;
+    let isStarting = false;
+
+    function setError(msg) {
+        document.getElementById('errorLog').innerText = msg || '';
+    }
 
     function initAudio() {
         if (!audioCtx) {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (!AC) return;
+            audioCtx = new AC();
         }
         if (audioCtx.state === 'suspended') {
-            audioCtx.resume();
+            audioCtx.resume().catch(() => {});
         }
     }
 
-    document.body.addEventListener('click', initAudio, { once: false });
-    document.body.addEventListener('touchstart', initAudio, { once: false });
+    document.body.addEventListener('click', initAudio, { passive: true });
+    document.body.addEventListener('touchstart', initAudio, { passive: true });
 
     function playBeep() {
         initAudio();
+        if (!audioCtx) return;
         try {
-            const buffer = audioCtx.createBuffer(1, 1, 22050);
-            const source = audioCtx.createBufferSource();
-            source.buffer = buffer;
-            source.connect(audioCtx.destination);
-            source.start(0);
-
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
 
             osc.type = 'sine';
             osc.frequency.setValueAtTime(1200, audioCtx.currentTime); 
-            
-            gain.gain.setValueAtTime(0.3, audioCtx.currentTime); 
+            gain.gain.setValueAtTime(0.25, audioCtx.currentTime); 
             gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08); 
 
             osc.connect(gain);
@@ -251,16 +252,14 @@
     }
 
     function addRecord(value) {
-        if (!value.trim()) return;
+        if (!value || !value.trim()) return;
         
         const now = new Date();
         const timeStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
         
         collectedData.push({ time: timeStr, value: value.trim() });
         updateUI();
-        
         playBeep();
-        
         if (navigator.vibrate) navigator.vibrate(100);
     }
 
@@ -272,9 +271,7 @@
     }
 
     document.getElementById('manualInput').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            addManualData();
-        }
+        if (e.key === 'Enter') addManualData();
     });
 
     function clearData() {
@@ -306,43 +303,82 @@
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     }
 
-    function onScanSuccess(decodedText, decodedResult) {
-        if (window.lastScan && Date.now() - window.lastScan < 1500) return;
+    function onScanSuccess(decodedText) {
+        if (window.lastScan && Date.now() - window.lastScan < 1200) return;
         window.lastScan = Date.now();
         addRecord(decodedText);
     }
 
-    // --- 核心重構：使用純 API 直接叫醒相機，避開 iOS UI 卡死 Bug ---
-    function startCamera() {
-        // 實例化純 API 類別（#reader 容器）
-        html5QrCode = new Html5QrCode("reader");
-        
-        const config = { 
-            fps: 15,
-            // 限制支援常見 1D 條碼
-            formatsToSupport: [ 
-                Html5QrcodeSupportedFormats.CODE_128,
-                Html5QrcodeSupportedFormats.EAN_13,
-                Html5QrcodeSupportedFormats.EAN_8,
-                Html5QrcodeSupportedFormats.CODE_39,
-                Html5QrcodeSupportedFormats.UPC_A
-            ]
-        };
+    function onScanFailure() {}
 
-        // 直接調用後置鏡頭啟動，跳過權限 UI 選擇
-        html5QrCode.start(
-            { facingMode: "environment" }, 
-            config, 
-            onScanSuccess
-        ).catch(err => {
-            document.getElementById('errorLog').innerText = "啟動鏡頭失敗: " + err;
-            console.error("Camera start failed: ", err);
-        });
+    async function startCamera() {
+        if (isStarting) return;
+        isStarting = true;
+        setError('');
+
+        try {
+            if (!window.isSecureContext) {
+                setError("需要 HTTPS 才可啟動相機。");
+                return;
+            }
+
+            if (html5QrCode) {
+                try { await html5QrCode.stop(); } catch(e) {}
+                try { await html5QrCode.clear(); } catch(e) {}
+            }
+
+            html5QrCode = new Html5Qrcode("reader");
+            const config = { 
+                fps: 12,
+                qrbox: { width: 280, height: 120 },
+                formatsToSupport: [ 
+                    Html5QrcodeSupportedFormats.CODE_128,
+                    Html5QrcodeSupportedFormats.EAN_13,
+                    Html5QrcodeSupportedFormats.EAN_8,
+                    Html5QrcodeSupportedFormats.CODE_39,
+                    Html5QrcodeSupportedFormats.UPC_A,
+                    Html5QrcodeSupportedFormats.QR_CODE
+                ]
+            };
+
+            // 先試後鏡頭
+            try {
+                await html5QrCode.start({ facingMode: { exact: "environment" } }, config, onScanSuccess, onScanFailure);
+            } catch (e1) {
+                // fallback：普通 environment
+                try {
+                    await html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, onScanFailure);
+                } catch (e2) {
+                    // fallback：第一個可用鏡頭
+                    const cams = await Html5Qrcode.getCameras();
+                    if (!cams || cams.length === 0) throw e2;
+                    await html5QrCode.start(cams[0].id, config, onScanSuccess, onScanFailure);
+                }
+            }
+
+            // iOS Safari 補強
+            const video = document.querySelector('#reader video');
+            if (video) {
+                video.setAttribute('playsinline', true);
+                video.setAttribute('webkit-playsinline', true);
+                video.muted = true;
+            }
+
+        } catch (err) {
+            console.error("Camera start failed:", err);
+            setError("啟動鏡頭失敗，請允許相機權限後按「重新啟動相機」。");
+        } finally {
+            isStarting = false;
+        }
     }
 
-    // 頁面載入完成後自動執行
+    function restartCamera() {
+        startCamera();
+    }
+
     window.addEventListener('DOMContentLoaded', () => {
         updateUI();
         startCamera();
