@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Barcode & 手動輸入收集器 v0.11</title>
+    <title>Barcode & 手動輸入收集器 v0.12</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
         body {
@@ -143,7 +143,7 @@
 <body>
 
 <div class="container">
-    <h2>條碼掃描 & 數據收集 v0.11</h2>
+    <h2>條碼掃描 & 數據收集 v0.12</h2>
     
     <div class="scanner-wrapper">
         <div id="reader"></div>
@@ -234,3 +234,120 @@
     }
 
     function updateUI() {
+        localStorage.setItem('scanned_data', JSON.stringify(collectedData));
+        document.getElementById('count').innerText = collectedData.length;
+        const tbody = document.getElementById('dataTableBody');
+        tbody.innerHTML = '';
+        
+        if (collectedData.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="2" class="no-data">暫無數據，請開始掃描或輸入</td></tr>`;
+            return;
+        }
+
+        [...collectedData].reverse().forEach(item => {
+            const row = `<tr><td>${item.time}</td><td>${item.value}</td></tr>`;
+            tbody.innerHTML += row;
+        });
+    }
+
+    function addRecord(value) {
+        if (!value.trim()) return;
+        
+        const now = new Date();
+        const timeStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+        
+        collectedData.push({ time: timeStr, value: value.trim() });
+        updateUI();
+        
+        playBeep();
+        
+        if (navigator.vibrate) navigator.vibrate(100);
+    }
+
+    function addManualData() {
+        const input = document.getElementById('manualInput');
+        addRecord(input.value);
+        input.value = '';
+        input.focus();
+    }
+
+    document.getElementById('manualInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            addManualData();
+        }
+    });
+
+    function clearData() {
+        if (confirm('確定要永久刪除所有已記錄的數據嗎？')) {
+            collectedData = [];
+            updateUI();
+        }
+    }
+
+    function exportToCSV() {
+        if (collectedData.length === 0) {
+            alert('沒有數據可以匯出！');
+            return;
+        }
+        
+        let csvContent = "\uFEFF"; 
+        csvContent += "時間,條碼數值\n";
+        
+        collectedData.forEach(item => {
+            const safeValue = `"${item.value.replace(/"/g, '""')}"`;
+            csvContent += `${item.time},${safeValue}\n`;
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `barcode_export_${Date.now()}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    function onScanSuccess(decodedText, decodedResult) {
+        if (window.lastScan && Date.now() - window.lastScan < 1500) return;
+        window.lastScan = Date.now();
+        addRecord(decodedText);
+    }
+
+    // --- 核心重構：使用純 API 直接叫醒相機，避開 iOS UI 卡死 Bug ---
+    function startCamera() {
+        // 實例化純 API 類別（#reader 容器）
+        html5QrCode = new Html5QrCode("reader");
+        
+        const config = { 
+            fps: 15,
+            // 限制支援常見 1D 條碼
+            formatsToSupport: [ 
+                Html5QrcodeSupportedFormats.CODE_128,
+                Html5QrcodeSupportedFormats.EAN_13,
+                Html5QrcodeSupportedFormats.EAN_8,
+                Html5QrcodeSupportedFormats.CODE_39,
+                Html5QrcodeSupportedFormats.UPC_A
+            ]
+        };
+
+        // 直接調用後置鏡頭啟動，跳過權限 UI 選擇
+        html5QrCode.start(
+            { facingMode: "environment" }, 
+            config, 
+            onScanSuccess
+        ).catch(err => {
+            document.getElementById('errorLog').innerText = "啟動鏡頭失敗: " + err;
+            console.error("Camera start failed: ", err);
+        });
+    }
+
+    // 頁面載入完成後自動執行
+    window.addEventListener('DOMContentLoaded', () => {
+        updateUI();
+        startCamera();
+    });
+</script>
+
+</body>
+</html>
