@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code & 手動輸入收集器</title>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 15px;
+            background-color: #f5f5f7;
+            color: #333;
+        }
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h2 { text-align: center; margin-top: 0; }
+        #reader {
+            width: 100%;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        input[type="text"] {
+            flex: 1;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .btn-primary { background-color: #007aff; color: white; }
+        .btn-success { background-color: #34c759; color: white; width: 100%; margin-top: 10px; }
+        .btn-danger { background-color: #ff3b30; color: white; }
+        
+        .list-container {
+            margin-top: 20px;
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            font-size: 14px;
+        }
+        th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>數據掃描 & 輸入器</h2>
+    
+    <div id="reader"></div>
+    
+    <div class="input-group">
+        <input type="text" id="manualInput" placeholder="手動輸入號碼/條碼" autocomplete="off">
+        <button class="btn-primary" onclick="addManualData()">加入</button>
+    </div>
+
+    <button class="btn-success" onclick="exportToCSV()">匯出 CSV (Excel)</button>
+    <button class="btn-danger" style="width: 100%; margin-top: 10px; background-color: #8e8e93;" onclick="clearData()">清除所有數據</button>
+
+    <div class="list-container">
+        <h3>已收集數據 (共 <span id="count">0</span> 條)</h3>
+        <div style="max-height: 200px; overflow-y: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>時間</th>
+                        <th>數值</th>
+                    </tr>
+                </thead>
+                <tbody id="dataTableBody">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 初始化本地儲存（防止 refresh 冇晒數據）
+    let collectedData = JSON.parse(localStorage.getItem('scanned_data')) || [];
+
+    // 更新畫面 Table
+    function updateUI() {
+        localStorage.setItem('scanned_data', JSON.stringify(collectedData));
+        document.getElementById('count').innerText = collectedData.length;
+        const tbody = document.getElementById('dataTableBody');
+        tbody.innerHTML = '';
+        
+        // 倒序顯示，最新入嘅排最前
+        [...collectedData].reverse().forEach(item => {
+            const row = `<tr><td>${item.time}</td><td>${item.value}</td></tr>`;
+            tbody.innerHTML += row;
+        });
+    }
+
+    // 新增一條數據
+    function addRecord(value) {
+        if (!value.trim()) return;
+        const now = new Date();
+        const timeStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+        
+        collectedData.push({ time: timeStr, value: value });
+        updateUI();
+        
+        // 震動手機提示 (如果瀏覽器支援)
+        if (navigator.vibrate) navigator.vibrate(100);
+    }
+
+    // 手動輸入新增
+    function addManualData() {
+        const input = document.getElementById('manualInput');
+        addRecord(input.value);
+        input.value = '';
+        input.focus();
+    }
+
+    // 支援按 Enter 鍵輸入
+    document.getElementById('manualInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            addManualData();
+        }
+    });
+
+    // 清除數據
+    function clearData() {
+        if (confirm('確定要刪除所有已記錄的數據嗎？')) {
+            collectedData = [];
+            updateUI();
+        }
+    }
+
+    // 匯出 CSV 核心邏輯
+    function exportToCSV() {
+        if (collectedData.length === 0) {
+            alert('沒有數據可供匯出！');
+            return;
+        }
+        
+        // 加上 UTF-8 BOM 避免 Excel 打開中文變亂碼
+        let csvContent = "\uFEFF"; 
+        csvContent += "時間,數值\n";
+        
+        collectedData.forEach(item => {
+            // 處理數值中可能含有的逗號，用雙引號包起
+            const safeValue = `"${item.value.replace(/"/g, '""')}"`;
+            csvContent += `${item.time},${safeValue}\n`;
+        });
+
+        // 建立 Blob 並觸發瀏覽器下載
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `scan_export_${Date.now()}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    // 初始化 QR Code 掃描器
+    function onScanSuccess(decodedText, decodedResult) {
+        // 避免重複掃到同一條碼頻繁觸發 (1.5秒鎖定)
+        if (window.lastScan && Date.now() - window.lastScan < 1500) return;
+        window.lastScan = Date.now();
+        
+        addRecord(decodedText);
+    }
+
+    // 啟動鏡頭
+    const html5QrcodeScanner = new Html5QrcodeScanner(
+        "reader", 
+        { 
+            fps: 10, 
+            qrbox: { width: 250, height: 250 },
+            rememberLastUsedCamera: true,
+            supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+        }
+    );
+    html5QrcodeScanner.render(onScanSuccess);
+
+    // 首次載入初始化 UI
+    updateUI();
+</script>
+
+</body>
+</html>
