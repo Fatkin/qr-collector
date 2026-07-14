@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Barcode & 手動輸入收集器</title>
     <script src="https://unpkg.com/html5-qrcode"></script>
     <style>
@@ -26,12 +26,23 @@
             margin-top: 0; 
             color: #1d1d1f;
         }
-        #reader {
+        
+        /* 鏡頭外殼容器 */
+        .scanner-wrapper {
+            position: relative;
             width: 100%;
             border-radius: 8px;
             overflow: hidden;
             margin-bottom: 15px;
+            background: #000;
+        }
+        #reader {
+            width: 100%;
             border: none !important;
+        }
+        /* 隱藏 html5-qrcode 原生肉酸嘅邊框與線條 */
+        #reader__dashboard, #reader__header {
+            display: none !important;
         }
         #reader button {
             background-color: #007aff;
@@ -40,9 +51,43 @@
             padding: 10px 15px;
             border-radius: 6px;
             font-weight: bold;
-            margin: 10px 0;
+            margin: 10px auto;
+            display: block;
             cursor: pointer;
         }
+
+        /* 自定義 CSS 掃描線/框：解決 iOS 裁剪解碼失敗問題，純視覺輔助 */
+        .scan-laser {
+            position: absolute;
+            top: 50%;
+            left: 5%;
+            width: 90%;
+            height: 2px;
+            background-color: #34c759;
+            box-shadow: 0 0 8px #34c759;
+            transform: translateY(-50%);
+            z-index: 10;
+            pointer-events: none;
+            animation: lasermove 2s infinite ease-in-out;
+        }
+        .scan-guide-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 80%;
+            height: 100px;
+            border: 2px dashed #34c759;
+            transform: translate(-50%, -50%);
+            z-index: 9;
+            pointer-events: none;
+            border-radius: 6px;
+        }
+        @keyframes lasermove {
+            0% { top: 30%; }
+            50% { top: 70%; }
+            100% { top: 30%; }
+        }
+
         .input-group {
             display: flex;
             gap: 10px;
@@ -71,6 +116,7 @@
         .btn-primary { background-color: #007aff; color: white; }
         .btn-success { background-color: #34c759; color: white; width: 100%; margin-top: 10px; }
         .btn-danger { background-color: #ff3b30; color: white; }
+        .btn-warn { background-color: #ff9500; color: white; width: 100%; margin-top: 10px; }
         
         .list-container {
             margin-top: 20px;
@@ -101,8 +147,15 @@
 <div class="container">
     <h2>條碼掃描 & 數據收集</h2>
     
-    <div id="reader"></div>
+    <div class="scanner-wrapper">
+        <div id="reader"></div>
+        <div class="scan-guide-box"></div>
+        <div class="scan-laser"></div>
+    </div>
     
+    <button class="btn-warn" id="testAudioBtn" onclick="testAudio()">🔊 點擊此處激活/測試「嗶」聲</button>
+    <div style="margin-bottom: 15px;"></div>
+
     <div class="input-group">
         <input type="text" id="manualInput" placeholder="手動輸入號碼 / 條碼" autocomplete="off">
         <button class="btn-primary" onclick="addManualData()">加入</button>
@@ -130,12 +183,9 @@
 
 <script>
     let collectedData = JSON.parse(localStorage.getItem('scanned_data')) || [];
-    
-    // 初始化 Audio Context (Web Audio API)
     let audioCtx = null;
 
-    // 用戶點擊任何地方時解鎖音效限制 (iOS 限制)
-    function unlockAudio() {
+    function initAudio() {
         if (!audioCtx) {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         }
@@ -143,37 +193,44 @@
             audioCtx.resume();
         }
     }
-    document.body.addEventListener('click', unlockAudio, { once: false });
-    document.body.addEventListener('touchstart', unlockAudio, { once: false });
 
-    // 播放模擬超市掃碼的「嗶」聲 (1000Hz 播放 0.1 秒)
+    document.body.addEventListener('click', initAudio, { once: false });
+    document.body.addEventListener('touchstart', initAudio, { once: false });
+
     function playBeep() {
+        initAudio();
         try {
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioCtx.state === 'suspended') {
-                audioCtx.resume();
-            }
+            const buffer = audioCtx.createBuffer(1, 1, 22050);
+            const source = audioCtx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioCtx.destination);
+            source.start(0);
 
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
 
             osc.type = 'sine';
-            osc.frequency.setValueAtTime(1000, audioCtx.currentTime); // 1000Hz 高頻
+            osc.frequency.setValueAtTime(1200, audioCtx.currentTime); 
             
-            // 漸弱避免音效結束時有爆音
-            gain.gain.setValueAtTime(0.2, audioCtx.currentTime); // 音量
-            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            gain.gain.setValueAtTime(0.3, audioCtx.currentTime); 
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08); 
 
             osc.connect(gain);
             gain.connect(audioCtx.destination);
 
             osc.start();
-            osc.stop(audioCtx.currentTime + 0.1); // 響 0.1 秒
+            osc.stop(audioCtx.currentTime + 0.08);
         } catch (e) {
             console.error("Audio playback failed: ", e);
         }
+    }
+
+    function testAudio() {
+        initAudio();
+        playBeep();
+        const btn = document.getElementById('testAudioBtn');
+        btn.innerText = "✅ 聲音已解鎖（若仍無聲請檢查手機側邊靜音掣）";
+        btn.style.backgroundColor = "#34c759";
     }
 
     function updateUI() {
@@ -193,7 +250,7 @@
         });
     }
 
-    function addRecord(value, source = 'manual') {
+    function addRecord(value) {
         if (!value.trim()) return;
         
         const now = new Date();
@@ -202,16 +259,14 @@
         collectedData.push({ time: timeStr, value: value.trim() });
         updateUI();
         
-        // 觸發「嗶」聲
         playBeep();
         
-        // 震動手機 (如有支援)
         if (navigator.vibrate) navigator.vibrate(100);
     }
 
     function addManualData() {
         const input = document.getElementById('manualInput');
-        addRecord(input.value, 'manual');
+        addRecord(input.value);
         input.value = '';
         input.focus();
     }
@@ -256,7 +311,7 @@
     function onScanSuccess(decodedText, decodedResult) {
         if (window.lastScan && Date.now() - window.lastScan < 1500) return;
         window.lastScan = Date.now();
-        addRecord(decodedText, 'scan');
+        addRecord(decodedText);
     }
 
     // 啟動條碼掃描器
@@ -264,8 +319,16 @@
         "reader", 
         { 
             fps: 15,
-            qrbox: { width: 300, height: 120 }, 
+            // 🔴 關鍵修正 1：移走 qrbox 設定，讓 iOS 調用原生的無裁切完整相機 Frame 進行解碼
             rememberLastUsedCamera: true,
+            // 🔴 關鍵修正 2：加強對常見 1D 條碼格式的支援
+            formatsToSupport: [ 
+                Html5QrcodeSupportedFormats.CODE_128,
+                Html5QrcodeSupportedFormats.EAN_13,
+                Html5QrcodeSupportedFormats.EAN_8,
+                Html5QrcodeSupportedFormats.CODE_39,
+                Html5QrcodeSupportedFormats.UPC_A
+            ],
             videoConstraints: {
                 facingMode: "environment"
             }
