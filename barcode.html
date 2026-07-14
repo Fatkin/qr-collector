@@ -130,6 +130,51 @@
 
 <script>
     let collectedData = JSON.parse(localStorage.getItem('scanned_data')) || [];
+    
+    // 初始化 Audio Context (Web Audio API)
+    let audioCtx = null;
+
+    // 用戶點擊任何地方時解鎖音效限制 (iOS 限制)
+    function unlockAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+    }
+    document.body.addEventListener('click', unlockAudio, { once: false });
+    document.body.addEventListener('touchstart', unlockAudio, { once: false });
+
+    // 播放模擬超市掃碼的「嗶」聲 (1000Hz 播放 0.1 秒)
+    function playBeep() {
+        try {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(1000, audioCtx.currentTime); // 1000Hz 高頻
+            
+            // 漸弱避免音效結束時有爆音
+            gain.gain.setValueAtTime(0.2, audioCtx.currentTime); // 音量
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.1); // 響 0.1 秒
+        } catch (e) {
+            console.error("Audio playback failed: ", e);
+        }
+    }
 
     function updateUI() {
         localStorage.setItem('scanned_data', JSON.stringify(collectedData));
@@ -148,21 +193,25 @@
         });
     }
 
-    function addRecord(value) {
+    function addRecord(value, source = 'manual') {
         if (!value.trim()) return;
         
         const now = new Date();
-        const timeStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}::${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+        const timeStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
         
         collectedData.push({ time: timeStr, value: value.trim() });
         updateUI();
         
+        // 觸發「嗶」聲
+        playBeep();
+        
+        // 震動手機 (如有支援)
         if (navigator.vibrate) navigator.vibrate(100);
     }
 
     function addManualData() {
         const input = document.getElementById('manualInput');
-        addRecord(input.value);
+        addRecord(input.value, 'manual');
         input.value = '';
         input.focus();
     }
@@ -207,18 +256,16 @@
     function onScanSuccess(decodedText, decodedResult) {
         if (window.lastScan && Date.now() - window.lastScan < 1500) return;
         window.lastScan = Date.now();
-        addRecord(decodedText);
+        addRecord(decodedText, 'scan');
     }
 
-    // --- 關鍵修正：啟動條碼掃描器 ---
+    // 啟動條碼掃描器
     const html5QrcodeScanner = new Html5QrcodeScanner(
         "reader", 
         { 
             fps: 15,
-            // 修正為 iOS 支援的固定寬高 Object，不再使用 Function，避免崩潰
             qrbox: { width: 300, height: 120 }, 
             rememberLastUsedCamera: true,
-            // 強制設定鏡頭調用參數，防止在 iOS Firefox/Safari 上選擇了錯誤的鏡頭
             videoConstraints: {
                 facingMode: "environment"
             }
